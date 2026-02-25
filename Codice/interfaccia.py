@@ -127,7 +127,7 @@ def build_figure(show_axes, show_traj, limit):
 def main():
     st.set_page_config(page_title='Orbita 3D', layout='wide')
     # NUOVO TITOLO PER CAPIRE SE IL FILE SI È AGGIORNATO
-    st.title('Visualizzazione 3D - MOTORE J2 ATTIVO') 
+    st.title('AquinSpace - Simulatore di Orbite 3D ') 
     ensure_state()
     
     with st.sidebar:

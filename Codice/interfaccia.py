@@ -64,12 +64,15 @@ def compute_step_from_precomputed(dt_slider):
         return None
         
     current_time = sol.t[idx]
-    target_time = current_time + dt_slider # Calcoliamo a che tempo vogliamo arrivare
+    target_time = current_time + dt_slider 
     
     new_idx = idx
-    # Aggiungiamo ALLA TRAIETTORIA tutti i punti intermedi in un colpo solo
     while new_idx < len(sol.t) and sol.t[new_idx] <= target_time:
         a_k, e_k, inc_k, w_k, Omega_k, M_k = sol.y[:, new_idx]
+        
+        # ---> ECCO LA MODIFICA MATEMATICA: Manteniamo l'angolo tra 0 e 2*pi <---
+        M_k = M_k % (2 * np.pi) 
+        
         pos, vel = ol.kep2car(a_k, e_k, inc_k, w_k, Omega_k, M_k, MU_EARTH)
         st.session_state.trajectory.append(pos.tolist())
         new_idx += 1
@@ -84,9 +87,12 @@ def compute_step_from_precomputed(dt_slider):
         
     st.session_state.precomputed_idx = new_idx
     
-    # Aggiorniamo la posizione visiva allo stato finale di questo scatto
     a_new, e_new, inc_new, w_new, Omega_new, M_new = sol.y[:, new_idx]
     n_new = np.sqrt(MU_EARTH / a_new**3)
+    
+    # ---> ECCO LA SECONDA MODIFICA MATEMATICA <---
+    M_new = M_new % (2 * np.pi) 
+    
     pos, vel = ol.kep2car(a_new, e_new, inc_new, w_new, Omega_new, M_new, MU_EARTH)
     
     st.session_state.position = pos.tolist()
@@ -200,31 +206,25 @@ def main():
     if colB.button('⏸️ Stop'): st.session_state.running = False
     if colC.button('🔄 Reset Traccia'): st.session_state.trajectory = [list(st.session_state.position)]
 
-    # --- Creazione di un "Contenitore Fisso" per bloccare lo sfarfallio ---
-    plot_placeholder = st.empty()
-    text_placeholder = st.empty()
-
     orbital_info = None
     if st.session_state.running:
         if use_perturbation and st.session_state.mode == 'Tempo' and st.session_state.get('precomputed_sol') is not None:
-            # Passiamo il dt dallo slider alla nuova funzione!
             orbital_info = compute_step_from_precomputed(dt_slider=dt) 
         else:
             if st.session_state.mode == 'Anomalia': orbital_info = compute_orbit_step(delta_M=delta_M)
             else: orbital_info = compute_orbit_step(dt=dt)
             
+    # Generazione della figura
     fig = build_figure(True, True, max_range)
     
-    # Inseriamo il grafico e il testo nel contenitore fisso
-    with plot_placeholder.container():
-        st.plotly_chart(fig, use_container_width=True)
-        
-    with text_placeholder.container():
-        if orbital_info:
-            st.markdown(f"**Tempo simulato:** {st.session_state.sim_time:.1f} s")
+    # ---> ECCO LA MODIFICA GRAFICA: La 'key' blocca il componente nella pagina! <---
+    st.plotly_chart(fig, use_container_width=True, key="grafico_3d_fisso")
+    
+    if orbital_info:
+        st.markdown(f"**Tempo simulato:** {st.session_state.sim_time:.1f} s")
         
     if st.session_state.running:
-        time.sleep(0.15) # Pausa allungata per far funzionare bene il bottone Stop!
+        time.sleep(0.15) 
         st.rerun()
 
 if __name__ == '__main__':

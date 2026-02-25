@@ -110,17 +110,34 @@ def build_figure(show_axes, show_traj, limit):
     if 'earth_mesh' not in st.session_state: st.session_state.earth_mesh = generate_earth_mesh()
     x, y, z, shade = st.session_state.earth_mesh
     fig = go.Figure()
+    
     if show_axes:
         fig.add_scatter3d(x=[-limit, limit], y=[0,0], z=[0,0], mode='lines', line=dict(color='red', width=4))
         fig.add_scatter3d(x=[0,0], y=[-limit, limit], z=[0,0], mode='lines', line=dict(color='green', width=4))
         fig.add_scatter3d(x=[0,0], y=[0,0], z=[-limit, limit], mode='lines', line=dict(color='blue', width=4))
+        
     fig.add_surface(x=x, y=y, z=z, surfacecolor=shade, colorscale='Blues', showscale=False, opacity=0.95)
+    
     px, py, pz = st.session_state.position
     fig.add_scatter3d(x=[px], y=[py], z=[pz], mode='markers', marker=dict(size=5, color='orange'))
+    
     if show_traj and len(st.session_state.trajectory) > 1:
         traj = np.array(st.session_state.trajectory)
         fig.add_scatter3d(x=traj[:,0], y=traj[:,1], z=traj[:,2], mode='lines', line=dict(color='yellow', width=2))
-    fig.update_layout(scene=dict(bgcolor='black', xaxis=dict(range=[-limit, limit]), yaxis=dict(range=[-limit, limit]), zaxis=dict(range=[-limit, limit]), aspectmode='cube'), margin=dict(l=0, r=0, b=0, t=0), showlegend=False)
+        
+    # --- LA MODIFICA È QUI SOTTO ---
+    fig.update_layout(
+        uirevision='locked',  # <-- QUESTA È LA MAGIA CHE BLOCCA LA TELECAMERA!
+        scene=dict(
+            bgcolor='black', 
+            xaxis=dict(range=[-limit, limit]), 
+            yaxis=dict(range=[-limit, limit]), 
+            zaxis=dict(range=[-limit, limit]), 
+            aspectmode='cube'
+        ), 
+        margin=dict(l=0, r=0, b=0, t=0), 
+        showlegend=False
+    )
     return fig
 
 # ---------------------- Main App ----------------------

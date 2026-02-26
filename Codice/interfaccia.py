@@ -5,6 +5,9 @@ import plotly.graph_objects as go
 import math
 import orbital_lib as ol
 import importlib
+from pathlib import Path
+BASE_DIR = Path(__file__).resolve().parent
+
 
 # Forza la ricarica della libreria
 importlib.reload(ol) 
@@ -215,7 +218,7 @@ def main():
     with col_logo:
         try:
             # L'immagine ora si espanderà per riempire questa colonna molto più larga
-            st.image("logo_scritta.jpg", use_container_width=True)
+            st.image(str(BASE_DIR / "logo_scritta.jpg"), use_container_width=True)
         except:
             st.warning("Logo non trovato")
             

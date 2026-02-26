@@ -137,8 +137,11 @@ def compute_step_from_precomputed(dt_slider):
 
 def generate_earth_mesh():
     if st.session_state.earth_mesh is not None: return st.session_state.earth_mesh
-    phi = np.linspace(0, np.pi, 90)
-    theta = np.linspace(0, 2*np.pi, 180)
+    
+    # MODIFICA QUI: Abbassiamo la risoluzione da 90x180 a 45x90!
+    phi = np.linspace(0, np.pi, 45)
+    theta = np.linspace(0, 2*np.pi, 90)
+    
     th_grid, ph_grid = np.meshgrid(theta, phi)
     x = EARTH_RADIUS * np.sin(ph_grid) * np.cos(th_grid)
     y = EARTH_RADIUS * np.sin(ph_grid) * np.sin(th_grid)

@@ -3,15 +3,22 @@ import time
 import numpy as np
 import plotly.graph_objects as go
 import math
-
 import orbital_lib as ol
 import importlib
-importlib.reload(ol) # <-- FORZA L'AGGIORNAMENTO DELLA LIBRERIA!
 
-# ---------------------- Config Costanti ----------------------
+# Forza la ricarica della libreria
+importlib.reload(ol) 
+
+# ---------------------- Configurazione Pagina ----------------------
+st.set_page_config(
+    page_title='AquinSpace',
+    layout='wide', 
+    initial_sidebar_state="collapsed" 
+)
+
+# ---------------------- Costanti & Preset ----------------------
 EARTH_RADIUS = 6371.0
 MU_EARTH = 398600.4418
-ATMOSPHERE_SCALE = 1.02
 MAX_TRAJ_POINTS = 6000
 TRIM_TRAJ_TO = 4000
 
@@ -22,16 +29,45 @@ PRESETS = {
     'GEO':                   {'alt': 35786.0, 'incl': 0.0}
 }
 
+# ---------------------- Funzioni di Stato e Reset ----------------------
 def ensure_state():
+    """Inizializza le variabili di stato se non esistono."""
     defaults = {
         'running': False, 'position': [7000.0, 0.0, 0.0], 'velocity': [0.0, 7.5, 0.0],
         'trajectory': [], 'mean_anomaly': 0.0, 'sim_time': 0.0, 'mode': 'Anomalia',
-        'elements': None, 'precomputed_sol': None, 'precomputed_idx': 0
+        'elements': None, 'precomputed_sol': None, 'precomputed_idx': 0,
+        'earth_mesh': None
     }
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
 
+def apply_preset(name):
+    """Applica i valori del preset allo stato."""
+    if name not in PRESETS: return
+    data = PRESETS[name]
+    if name == 'GEO':
+        r = EARTH_RADIUS + data['alt']
+        v = np.sqrt(MU_EARTH / r)
+        st.session_state.position = [r, 0.0, 0.0]
+        st.session_state.velocity = [0.0, v, 0.0]
+    elif 'perigee_alt' in data: # GTO
+        rp = EARTH_RADIUS + data['perigee_alt']
+        ra = EARTH_RADIUS + data['apogee_alt']
+        a = (rp + ra) / 2
+        vp = np.sqrt(MU_EARTH * (2/rp - 1/a))
+        st.session_state.position = [rp, 0.0, 0.0]
+        st.session_state.velocity = [0.0, vp, 0.0]
+    else: # LEO
+        r = EARTH_RADIUS + data['alt']
+        v_mag = np.sqrt(MU_EARTH / r)
+        incl_rad = np.radians(data['incl'])
+        st.session_state.position = [r, 0.0, 0.0]
+        st.session_state.velocity = [0.0, v_mag * np.cos(incl_rad), v_mag * np.sin(incl_rad)]
+    
+    st.session_state.trajectory = [list(st.session_state.position)]
+
+# ---------------------- Funzioni di Calcolo e Grafica ----------------------
 def compute_orbit_step(delta_M=None, dt=None):
     if st.session_state.elements is None: return
     a, e, inc, w, Omega, l0, n, t_peri = st.session_state.elements
@@ -52,10 +88,9 @@ def compute_orbit_step(delta_M=None, dt=None):
     st.session_state.trajectory.append(st.session_state.position.copy())
     if len(st.session_state.trajectory) > MAX_TRAJ_POINTS:
         st.session_state.trajectory = st.session_state.trajectory[-TRIM_TRAJ_TO:]
-    return dict(e=e, a=a, i=inc, M=M_new, n=n, omega=w, Omega=Omega, T=2*np.pi/n)
+    return dict(T=2*np.pi/n)
 
 def compute_step_from_precomputed(dt_slider):
-    """Avanza sfogliando i dati pre-calcolati ad alta densità per una curva perfetta."""
     sol = st.session_state.precomputed_sol
     idx = st.session_state.precomputed_idx
     
@@ -69,10 +104,7 @@ def compute_step_from_precomputed(dt_slider):
     new_idx = idx
     while new_idx < len(sol.t) and sol.t[new_idx] <= target_time:
         a_k, e_k, inc_k, w_k, Omega_k, M_k = sol.y[:, new_idx]
-        
-        # ---> ECCO LA MODIFICA MATEMATICA: Manteniamo l'angolo tra 0 e 2*pi <---
         M_k = M_k % (2 * np.pi) 
-        
         pos, vel = ol.kep2car(a_k, e_k, inc_k, w_k, Omega_k, M_k, MU_EARTH)
         st.session_state.trajectory.append(pos.tolist())
         new_idx += 1
@@ -89,8 +121,6 @@ def compute_step_from_precomputed(dt_slider):
     
     a_new, e_new, inc_new, w_new, Omega_new, M_new = sol.y[:, new_idx]
     n_new = np.sqrt(MU_EARTH / a_new**3)
-    
-    # ---> ECCO LA SECONDA MODIFICA MATEMATICA <---
     M_new = M_new % (2 * np.pi) 
     
     pos, vel = ol.kep2car(a_new, e_new, inc_new, w_new, Omega_new, M_new, MU_EARTH)
@@ -100,131 +130,226 @@ def compute_step_from_precomputed(dt_slider):
     st.session_state.sim_time = sol.t[new_idx]
     st.session_state.elements = (a_new, e_new, inc_new, w_new, Omega_new, M_new, n_new, 0.0)
     
-    return dict(e=e_new, a=a_new, i=inc_new, M=M_new, n=n_new, omega=w_new, Omega=Omega_new, T=2*math.pi/n_new)
+    return dict(T=2*math.pi/n_new)
 
-def generate_earth_mesh(res_lat=90, res_lon=180, radius=EARTH_RADIUS):
-    phi = np.linspace(0, np.pi, res_lat)
-    theta = np.linspace(0, 2*np.pi, res_lon)
+def generate_earth_mesh():
+    if st.session_state.earth_mesh is not None: return st.session_state.earth_mesh
+    phi = np.linspace(0, np.pi, 90)
+    theta = np.linspace(0, 2*np.pi, 180)
     th_grid, ph_grid = np.meshgrid(theta, phi)
-    x = radius * np.sin(ph_grid) * np.cos(th_grid)
-    y = radius * np.sin(ph_grid) * np.sin(th_grid)
-    z = radius * np.cos(ph_grid)
+    x = EARTH_RADIUS * np.sin(ph_grid) * np.cos(th_grid)
+    y = EARTH_RADIUS * np.sin(ph_grid) * np.sin(th_grid)
+    z = EARTH_RADIUS * np.cos(ph_grid)
     shade = np.clip(np.sin(ph_grid) * np.cos(th_grid)*0.8 + np.cos(ph_grid)*0.4, 0, 1)
+    st.session_state.earth_mesh = (x, y, z, shade)
     return x, y, z, shade
 
-def build_figure(show_axes, show_traj, limit):
-    if 'earth_mesh' not in st.session_state: st.session_state.earth_mesh = generate_earth_mesh()
-    x, y, z, shade = st.session_state.earth_mesh
+def build_figure(max_range):
+    x, y, z, shade = generate_earth_mesh()
     fig = go.Figure()
     
-    if show_axes:
-        fig.add_scatter3d(x=[-limit, limit], y=[0,0], z=[0,0], mode='lines', line=dict(color='red', width=4))
-        fig.add_scatter3d(x=[0,0], y=[-limit, limit], z=[0,0], mode='lines', line=dict(color='green', width=4))
-        fig.add_scatter3d(x=[0,0], y=[0,0], z=[-limit, limit], mode='lines', line=dict(color='blue', width=4))
+    # Assi
+    fig.add_scatter3d(x=[-max_range, max_range], y=[0,0], z=[0,0], mode='lines', line=dict(color='red', width=4), hoverinfo='none')
+    fig.add_scatter3d(x=[0,0], y=[-max_range, max_range], z=[0,0], mode='lines', line=dict(color='green', width=4), hoverinfo='none')
+    fig.add_scatter3d(x=[0,0], y=[0,0], z=[-max_range, max_range], mode='lines', line=dict(color='blue', width=4), hoverinfo='none')
         
-    fig.add_surface(x=x, y=y, z=z, surfacecolor=shade, colorscale='Blues', showscale=False, opacity=0.95)
+    # Terra
+    fig.add_surface(x=x, y=y, z=z, surfacecolor=shade, colorscale='Blues', showscale=False, opacity=0.95, hoverinfo='none')
     
+    # Satellite
     px, py, pz = st.session_state.position
-    fig.add_scatter3d(x=[px], y=[py], z=[pz], mode='markers', marker=dict(size=5, color='orange'))
+    fig.add_scatter3d(x=[px], y=[py], z=[pz], mode='markers', marker=dict(size=6, color='orange', symbol='diamond'), name='Satellite')
     
-    if show_traj and len(st.session_state.trajectory) > 1:
+    # Traiettoria
+    if len(st.session_state.trajectory) > 1:
         traj = np.array(st.session_state.trajectory)
-        fig.add_scatter3d(x=traj[:,0], y=traj[:,1], z=traj[:,2], mode='lines', line=dict(color='yellow', width=2))
+        fig.add_scatter3d(x=traj[:,0], y=traj[:,1], z=traj[:,2], mode='lines', line=dict(color='yellow', width=3), name='Traiettoria')
         
-    # --- LA MODIFICA È QUI SOTTO ---
     fig.update_layout(
-        uirevision='locked',  # <-- QUESTA È LA MAGIA CHE BLOCCA LA TELECAMERA!
+        uirevision='locked', 
         scene=dict(
-            bgcolor='black', 
-            xaxis=dict(range=[-limit, limit]), 
-            yaxis=dict(range=[-limit, limit]), 
-            zaxis=dict(range=[-limit, limit]), 
+            bgcolor='black',
+            xaxis=dict(range=[-max_range, max_range], visible=False),
+            yaxis=dict(range=[-max_range, max_range], visible=False),
+            zaxis=dict(range=[-max_range, max_range], visible=False),
             aspectmode='cube'
-        ), 
-        margin=dict(l=0, r=0, b=0, t=0), 
-        showlegend=False
+        ),
+        margin=dict(l=0, r=0, b=0, t=0),
+        showlegend=False,
+        height=700 
     )
     return fig
 
-# ---------------------- Main App ----------------------
+# ---------------------- MAIN APPLICATION ----------------------
 def main():
-    st.set_page_config(page_title='Orbita 3D', layout='wide')
-    # NUOVO TITOLO PER CAPIRE SE IL FILE SI È AGGIORNATO
-    st.title('AquinSpace - Simulatore di Orbite 3D ') 
     ensure_state()
+
+    # --- INIEZIONE CSS PER SFONDO NERO E BOTTONI ---
+    st.markdown("""
+        <style>
+        .stApp { background-color: #000000; }
+        .stApp, h1, h2, h3, h4, h5, h6, p, label, span { color: #FFFFFF !important; }
+        [data-testid="stExpander"] { background-color: #111111; border-color: #333333; }
+        
+        /* Stile personalizzato per i bottoni "primary" */
+        button[kind="primary"] {
+            background-color: #ff4b4b !important; /* Rosso */
+            color: white !important;
+            border: none;
+            transition: 0.2s;
+        }
+        button[kind="primary"]:hover {
+            background-color: #ff3333 !important; /* Rosso più scuro al passaggio del mouse */
+        }
+        button[kind="primary"]:active {
+            background-color: #ffffff !important; /* Bianco durante il click */
+            color: #ff4b4b !important; /* Testo rosso durante il click */
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+    # --- HEADER: Logo e Titolo AquinSpace ---
+    # Aumentata la proporzione della prima colonna (da 1 a 1.5) per ingrandire il logo!
+    col_logo, col_header_title = st.columns([1.5, 2.5], gap="large")
     
-    with st.sidebar:
-        st.header('Configurazione iniziale')
-        sx = st.number_input('Posizione X', value=float(st.session_state.position[0]))
-        sy = st.number_input('Posizione Y', value=float(st.session_state.position[1]))
-        sz = st.number_input('Posizione Z', value=float(st.session_state.position[2]))
-        vx = st.number_input('Velocità VX', value=float(st.session_state.velocity[0]))
-        vy = st.number_input('Velocità VY', value=float(st.session_state.velocity[1]))
-        vz = st.number_input('Velocità VZ', value=float(st.session_state.velocity[2]))
-        
-        mode = st.radio('Modalità avanzamento', ['Anomalia','Tempo'], index=0 if st.session_state.mode=='Anomalia' else 1)
-        st.session_state.mode = mode
-        delta_M = st.slider('ΔM per step (rad)', 0.001, 0.05, 0.01, step=0.001, disabled=mode!='Anomalia')
-        dt = st.slider('Δt per step (s)', 10.0, 5000.0, 100.0, step=10.0, disabled=mode!='Tempo')
-        
-        use_perturbation = st.checkbox('Attiva Perturbazione J2', value=False)
-        if use_perturbation and mode == 'Anomalia':
-            st.warning("⚠️ Passa alla modalità 'Tempo' per usare le perturbazioni.")
-            
-        max_range = st.number_input('Scala vista (km)', value=7000, min_value=7000, step=500)
-
-    colA, colB, colC = st.columns(3)
-    if colA.button('▶️ Start'):
-        st.session_state.position = [sx, sy, sz]
-        st.session_state.velocity = [vx, vy, vz]
+    with col_logo:
         try:
-            st.session_state.elements = ol.car2kep(st.session_state.position, st.session_state.velocity, MU_EARTH)
-        except Exception as ex:
-            st.error(f"Errore: {ex}")
-            st.session_state.running = False
-        else:
-            st.session_state.sim_time = 0.0
-            st.session_state.trajectory = [list(st.session_state.position)]
+            # L'immagine ora si espanderà per riempire questa colonna molto più larga
+            st.image("logo_scritta.jpg", use_container_width=True)
+        except:
+            st.warning("Logo non trovato")
             
-            if use_perturbation and mode == 'Tempo':
-                with st.spinner("🚀 Pre-calcolo dell'orbita perturbata in corso..."):
-                    try:
-                        sol = ol.precompute_perturbed_orbit(
-                            elements=st.session_state.elements,
-                            mu=MU_EARTH, J2=1.08262668e-3, Re=EARTH_RADIUS, num_orbits=50
-                        )
-                        st.session_state.precomputed_sol = sol
-                        st.session_state.precomputed_idx = 0
-                        st.session_state.running = True
-                    except Exception as e:
-                        st.error(f"❌ Errore di pre-calcolo: {e}")
-                        st.session_state.running = False
+    with col_header_title:
+        # Ho aggiunto un po' di margine superiore (margin-top: 40px) per centrare 
+        # la scritta rispetto al logo diventato più alto
+        st.markdown("<h1 style='font-size: 5rem; font-weight: 800; margin-top: 40px;'>AquinSpace</h1>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # --- LAYOUT PRINCIPALE A DUE COLONNE ---
+    left_panel, right_panel = st.columns([1, 2], gap="medium")
+
+    # ================== PANNELLO SINISTRO (Controlli) ==================
+    with left_panel:
+        st.subheader("Pannello di Controllo")
+        
+        with st.expander("1. Stato Iniziale e Preset", expanded=True):
+            preset_choice = st.selectbox('Scegli un Preset', ['(Personalizzato)'] + list(PRESETS.keys()))
+            if preset_choice != '(Personalizzato)':
+                # ---> ECCO LA MODIFICA: Aggiunto type="primary" <---
+                if st.button(f'Applica {preset_choice}', type="primary", use_container_width=True):
+                    apply_preset(preset_choice)
+                    st.rerun()
+
+            col_pos, col_vel = st.columns(2)
+            with col_pos:
+                st.markdown("**Posizione (km)**")
+                sx = st.number_input('X', value=float(st.session_state.position[0]), format="%.1f", key="in_sx")
+                sy = st.number_input('Y', value=float(st.session_state.position[1]), format="%.1f", key="in_sy")
+                sz = st.number_input('Z', value=float(st.session_state.position[2]), format="%.1f", key="in_sz")
+            with col_vel:
+                st.markdown("**Velocità (km/s)**")
+                vx = st.number_input('VX', value=float(st.session_state.velocity[0]), format="%.3f", key="in_vx")
+                vy = st.number_input('VY', value=float(st.session_state.velocity[1]), format="%.3f", key="in_vy")
+                vz = st.number_input('VZ', value=float(st.session_state.velocity[2]), format="%.3f", key="in_vz")
+
+        with st.expander("2. Parametri Simulazione", expanded=True):
+            st.session_state.mode = st.radio('Modalità di avanzamento', ['Anomalia', 'Tempo'], 
+                                             index=0 if st.session_state.mode=='Anomalia' else 1, horizontal=True)
+            
+            delta_M = st.slider('Step Anomalia (rad)', 0.001, 0.05, 0.01, step=0.001, disabled=st.session_state.mode!='Anomalia')
+            dt = st.slider('Step Tempo (s)', 10.0, 5000.0, 100.0, step=10.0, disabled=st.session_state.mode!='Tempo')
+            
+            st.markdown("---")
+            use_perturbation = st.toggle('Attiva Perturbazione J2', value=False)
+            if use_perturbation and st.session_state.mode == 'Anomalia':
+                st.error("Per usare J2, passa alla modalità 'Tempo'.")
+
+        with st.expander("3. Vista e Azioni", expanded=True):
+            max_range = st.number_input('Scala Visuale (km)', value=8000, min_value=7000, step=1000)
+            
+            st.markdown("##### Comandi")
+            btn_col1, btn_col2, btn_col3 = st.columns(3)
+            # Aggiunto type="primary" a tutti i bottoni per farli diventare rossi!
+            start_pressed = btn_col1.button('▶️ START', type="primary", use_container_width=True)
+            stop_pressed = btn_col2.button('⏸️ STOP', type="primary", use_container_width=True)
+            reset_trace_pressed = btn_col3.button('🔄 TRACCIA', type="primary", use_container_width=True)
+
+    # ================== PANNELLO DESTRO (Visualizzazione e Appendice) ==================
+    with right_panel:
+        if stop_pressed: st.session_state.running = False
+        if reset_trace_pressed: st.session_state.trajectory = [list(st.session_state.position)]
+        
+        if start_pressed:
+            st.session_state.position = [sx, sy, sz]
+            st.session_state.velocity = [vx, vy, vz]
+            try:
+                st.session_state.elements = ol.car2kep(st.session_state.position, st.session_state.velocity, MU_EARTH)
+            except Exception as ex:
+                st.error(f"Errore elementi iniziali: {ex}")
+                st.session_state.running = False
             else:
-                st.session_state.precomputed_sol = None
-                st.session_state.running = True
+                st.session_state.sim_time = 0.0
+                st.session_state.trajectory = [list(st.session_state.position)]
+                
+                if use_perturbation and st.session_state.mode == 'Tempo':
+                    with st.spinner("🚀 Pre-calcolo orbita J2 in corso... (attendere)"):
+                        try:
+                            sol = ol.precompute_perturbed_orbit(
+                                elements=st.session_state.elements,
+                                mu=MU_EARTH, J2=1.08262668e-3, Re=EARTH_RADIUS, num_orbits=100
+                            )
+                            st.session_state.precomputed_sol = sol
+                            st.session_state.precomputed_idx = 0
+                            st.session_state.running = True
+                        except Exception as e:
+                            st.error(f"Errore pre-calcolo: {e}")
+                            st.session_state.running = False
+                elif use_perturbation and st.session_state.mode == 'Anomalia':
+                     st.session_state.running = False 
+                else:
+                    st.session_state.precomputed_sol = None
+                    st.session_state.running = True
+        
+        # --- Visualizzazione Grafico 3D ---
+        fig = build_figure(max_range)
+        st.plotly_chart(fig, use_container_width=True, key="grafico_3d_main")
+        
+        # Mostra il tempo
+        info_container = st.container(border=True)
+        with info_container:
+            st.markdown(f"<h3 style='text-align: center; color: white; margin: 0;'>Tempo Simulato: {st.session_state.sim_time:.1f} s</h3>", unsafe_allow_html=True)
+        
+        # --- Sezione Appendice Personale (Statica) ---
+        st.divider()
+        st.subheader("📌 Appendice: Note e Considerazioni sul Progetto")
+        
+        # Qui puoi inserire tutto il testo, le liste o le presentazioni che desideri
+        st.markdown("""
+        **Presentazione del Lavoro:**
+        Questo ambiente di simulazione orbitale è stato sviluppato con l'obiettivo di analizzare l'evoluzione 
+        dinamica delle orbite terrestri. Il core matematico è costruito su propagatori numerici ad alta precisione 
+        per integrare le *Equazioni Planetarie di Lagrange*.
 
-    if colB.button('⏸️ Stop'): st.session_state.running = False
-    if colC.button('🔄 Reset Traccia'): st.session_state.trajectory = [list(st.session_state.position)]
+        **Considerazioni sulla Perturbazione J2:**
+        - L'asfericità del corpo centrale induce variazioni secolari sugli elementi orbitali.
+        - L'effetto è particolarmente visibile sulla precessione dell'anomalia del nodo ascendente ($\Omega$) 
+          e sull'argomento del pericentro ($\omega$).
+        - Per le orbite LEO equatoriali o fortemente eccentriche, questi effetti dettano i requisiti di 
+          station-keeping della missione.
 
-    orbital_info = None
+        *(Puoi modificare questo testo direttamente all'interno del file `interfaccia.py` alla riga 263)*
+        """)
+
+    # ================== CICLO DI AGGIORNAMENTO (IL MOTORE) ==================
     if st.session_state.running:
         if use_perturbation and st.session_state.mode == 'Tempo' and st.session_state.get('precomputed_sol') is not None:
-            orbital_info = compute_step_from_precomputed(dt_slider=dt) 
-        else:
-            if st.session_state.mode == 'Anomalia': orbital_info = compute_orbit_step(delta_M=delta_M)
-            else: orbital_info = compute_orbit_step(dt=dt)
+            compute_step_from_precomputed(dt_slider=dt) 
+        elif not use_perturbation:
+            if st.session_state.mode == 'Anomalia': compute_orbit_step(delta_M=delta_M)
+            else: compute_orbit_step(dt=dt)
             
-    # Generazione della figura
-    fig = build_figure(True, True, max_range)
-    
-    # ---> ECCO LA MODIFICA GRAFICA: La 'key' blocca il componente nella pagina! <---
-    st.plotly_chart(fig, use_container_width=True, key="grafico_3d_fisso")
-    
-    if orbital_info:
-        st.markdown(f"**Tempo simulato:** {st.session_state.sim_time:.1f} s")
-        
-    if st.session_state.running:
-        time.sleep(0.15) 
+        time.sleep(0.1) 
         st.rerun()
 
 if __name__ == '__main__':

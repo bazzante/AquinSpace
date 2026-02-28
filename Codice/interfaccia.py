@@ -340,8 +340,6 @@ def main():
           e sull'argomento del pericentro ($\omega$).
         - Per le orbite LEO equatoriali o fortemente eccentriche, questi effetti dettano i requisiti di 
           station-keeping della missione.
-
-        *(Puoi modificare questo testo direttamente all'interno del file `interfaccia.py` alla riga 263)*
         """)
 
     # ================== CICLO DI AGGIORNAMENTO (IL MOTORE) ==================

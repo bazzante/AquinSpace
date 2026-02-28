@@ -343,6 +343,8 @@ def main():
           e sull'argomento del pericentro ($\omega$).
         - Per le orbite LEO equatoriali o fortemente eccentriche, questi effetti dettano i requisiti di 
           station-keeping della missione.
+          - La simulazione pre-calcola l'evoluzione orbitale con J2 per 100 orbite, consentendo un confronto 
+            diretto tra il comportamento perturbato e quello ideale.
         """)
 
     # ================== CICLO DI AGGIORNAMENTO (IL MOTORE) ==================

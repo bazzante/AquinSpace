@@ -519,7 +519,7 @@ def propagate_perturbed_orbit(kepElements,mu, num_steps=50000, num_orbits=100):
     
     # 3. Integrazione Numerica con Runge-Kutta
     sol = solve_ivp(
-        fun=lpe.lpe_derivatives_j2,     # La funzione con le derivate che abbiamo appena creato
+        fun=lpe_derivatives_j2,     # La funzione con le derivate che abbiamo appena creato
         t_span=t_span,              # Da dove a dove integrare
         y0=stato_iniziale,          # Stato iniziale [a, e, i, w, Omega, M]
         t_eval=tempi_eval,          # In quali istanti voglio salvare i dati

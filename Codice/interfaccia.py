@@ -186,6 +186,73 @@ def build_figure(max_range):
     )
     return fig
 
+def build_animated_figure(x_hist, y_hist, z_hist, max_range):
+    """
+    Crea un grafico Plotly 3D con la traiettoria completa e un'animazione 
+    fluida del satellite che la percorre.
+    """
+    x_earth, y_earth, z_earth, shade = generate_earth_mesh()
+    fig = go.Figure()
+    
+    # 1. Traccia 0, 1, 2: Assi
+    fig.add_scatter3d(x=[-max_range, max_range], y=[0,0], z=[0,0], mode='lines', line=dict(color='red', width=4), hoverinfo='none', name='Asse X')
+    fig.add_scatter3d(x=[0,0], y=[-max_range, max_range], z=[0,0], mode='lines', line=dict(color='green', width=4), hoverinfo='none', name='Asse Y')
+    fig.add_scatter3d(x=[0,0], y=[0,0], z=[-max_range, max_range], mode='lines', line=dict(color='blue', width=4), hoverinfo='none', name='Asse Z')
+        
+    # 2. Traccia 3: Terra
+    fig.add_surface(x=x_earth, y=y_earth, z=z_earth, surfacecolor=shade, colorscale='Blues', showscale=False, opacity=0.95, hoverinfo='none', name='Terra')
+    
+    # 3. Traccia 4: Traiettoria Statica Completa (la linea gialla)
+    fig.add_scatter3d(x=x_hist, y=y_hist, z=z_hist, mode='lines', line=dict(color='yellow', width=2), name='Traiettoria', hoverinfo='none')
+    
+    # 4. Traccia 5: Il Satellite (Posizione Iniziale)
+    fig.add_scatter3d(x=[x_hist[0]], y=[y_hist[0]], z=[z_hist[0]], mode='markers', marker=dict(size=6, color='orange', symbol='diamond'), name='Satellite')
+    
+    # --- Creazione dei Frame per l'animazione ---
+    # Per evitare di bloccare il browser con 50.000 frame (nel caso di perturbazioni),
+    # eseguiamo un "sottocampionamento" (decimation). Creiamo un frame ogni N punti.
+    num_frames = min(len(x_hist), 500) # Massimo 500 frame per la fluidità
+    step = max(1, len(x_hist) // num_frames)
+    
+    frames = []
+    for i in range(0, len(x_hist), step):
+        # Aggiorniamo SOLO la traccia del satellite (che è la traccia numero 5)
+        frame = go.Frame(
+            data=[go.Scatter3d(x=[x_hist[i]], y=[y_hist[i]], z=[z_hist[i]])],
+            traces=[5] # Indice della traccia del satellite inserita sopra
+        )
+        frames.append(frame)
+    
+    fig.frames = frames
+    
+    # --- Configurazione dei pulsanti Play/Pause ---
+    fig.update_layout(
+        updatemenus=[dict(
+            type="buttons",
+            showactive=False,
+            x=0.1, y=1.0, # Posizione dei pulsanti nel grafico
+            buttons=[
+                dict(label="▶ Play Animazione",
+                     method="animate",
+                     args=[None, dict(frame=dict(duration=50, redraw=True), fromcurrent=True, mode="immediate")]),
+                dict(label="⏸ Pausa",
+                     method="animate",
+                     args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
+            ]
+        )],
+        uirevision='locked', 
+        scene=dict(
+            bgcolor='black',
+            xaxis=dict(range=[-max_range, max_range], visible=False),
+            yaxis=dict(range=[-max_range, max_range], visible=False),
+            zaxis=dict(range=[-max_range, max_range], visible=False),
+            aspectmode='cube'
+        ),
+        margin=dict(l=0, r=0, b=0, t=0),
+        showlegend=False,
+        height=700 
+    )
+    return fig
 # ---------------------- MAIN APPLICATION ----------------------
 def main():
     ensure_state()
@@ -281,46 +348,65 @@ def main():
             stop_pressed = btn_col2.button('⏸️ STOP', type="primary", use_container_width=True)
             reset_trace_pressed = btn_col3.button('🔄 TRACCIA', type="primary", use_container_width=True)
 
-    # ================== PANNELLO DESTRO (Visualizzazione e Appendice) ==================
+# ================== PANNELLO DESTRO (Visualizzazione e Appendice) ==================
     with right_panel:
-        if stop_pressed: st.session_state.running = False
-        if reset_trace_pressed: st.session_state.trajectory = [list(st.session_state.position)]
+        if stop_pressed: 
+            st.session_state.trajectory_data = None # Resetta i dati
+            
+        if reset_trace_pressed: 
+            st.session_state.trajectory_data = None
         
+        # Inizializziamo una variabile nel session state per tenere in memoria la traiettoria pre-calcolata
+        if 'trajectory_data' not in st.session_state:
+            st.session_state.trajectory_data = None
+            
         if start_pressed:
             st.session_state.position = [sx, sy, sz]
             st.session_state.velocity = [vx, vy, vz]
             try:
-                st.session_state.elements = ol.car2kep(st.session_state.position, st.session_state.velocity, MU_EARTH)
-            except Exception as ex:
-                st.error(f"Errore elementi iniziali: {ex}")
-                st.session_state.running = False
-            else:
-                st.session_state.sim_time = 0.0
-                st.session_state.trajectory = [list(st.session_state.position)]
+                # 1. Calcola gli elementi kepleriani iniziali
+                kep_el = ol.car2kep(st.session_state.position, st.session_state.velocity, MU_EARTH)
+                st.session_state.elements = kep_el
                 
-                if use_perturbation and st.session_state.mode == 'Tempo':
-                    with st.spinner("🚀 Pre-calcolo orbita J2 in corso... (attendere)"):
-                        try:
-                            sol = ol.precompute_perturbed_orbit(
-                                elements=st.session_state.elements,
-                                mu=MU_EARTH, J2=1.08262668e-3, Re=EARTH_RADIUS, num_orbits=100
-                            )
-                            st.session_state.precomputed_sol = sol
-                            st.session_state.precomputed_idx = 0
-                            st.session_state.running = True
-                        except Exception as e:
-                            st.error(f"Errore pre-calcolo: {e}")
-                            st.session_state.running = False
-                elif use_perturbation and st.session_state.mode == 'Anomalia':
-                     st.session_state.running = False 
-                else:
-                    st.session_state.precomputed_sol = None
-                    st.session_state.running = True
-        
-        # --- Visualizzazione Grafico 3D ---
-        fig = build_figure(max_range)
+                with st.spinner("🚀 Pre-calcolo dell'orbita in corso... (attendere)"):
+                    if use_perturbation:
+                        # Calcola 100 orbite perturbate
+                        x_h, y_h, z_h, vx_h, vy_h, vz_h, t_sol, y_sol = ol.propagate_perturbed_orbit(
+                            kepElements=kep_el, mu=MU_EARTH, num_steps=5000, num_orbits=100
+                        )
+                    else:
+                        # Calcola 1 singola orbita osculatrice periodica
+                        x_h, y_h, z_h, vx_h, vy_h, vz_h, orbEl_hist = ol.osculating_orbit(
+                            kepElements=kep_el, mu=MU_EARTH
+                        )
+                    
+                    # Salviamo i risultati nel session state
+                    st.session_state.trajectory_data = (x_h, y_h, z_h)
+                    
+            except Exception as ex:
+                st.error(f"Errore nel calcolo orbitale: {ex}")
+
+        # --- Visualizzazione Grafico 3D Animato ---
+        if st.session_state.trajectory_data is not None:
+            # Se abbiamo i dati, costruiamo il grafico animato
+            x_h, y_h, z_h = st.session_state.trajectory_data
+            fig = build_animated_figure(x_h, y_h, z_h, max_range)
+        else:
+            # Grafico di default (vuoto/solo posizione iniziale)
+            fig = build_figure(max_range) # Usiamo la tua vecchia funzione solo come placeholder iniziale
+            
         st.plotly_chart(fig, use_container_width=True, key="grafico_3d_main")
         
+        # NOTA: Essendo un'animazione gestita dal browser, il tempo in secondi non si 
+        # aggiornerà in tempo reale tramite Streamlit senza farlo sfarfallare. 
+        # Rimuoviamo il container del tempo che si aggiorna in loop per ora.
+        
+        # --- Sezione Appendice Personale (Statica) ---
+        # ... (Mantieni qui la tua st.divider() e st.subheader("📌 Appendice..."))
+        
+    # ELIMINA COMPLETAMENTE IL BLOCCO: "CICLO DI AGGIORNAMENTO (IL MOTORE)"
+    # Non abbiamo più bisogno di time.sleep né di st.rerun() in fondo al file!
+    
         # Mostra il tempo
         info_container = st.container(border=True)
         with info_container:

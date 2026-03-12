@@ -4,7 +4,34 @@ import numpy as np
 import os
 from scipy.integrate import solve_ivp
 
-# --- Incolla qui le tue funzioni ---
+global gravitatioal_coefficient = 6.67430e-20  # Costante gravitazionale (in unità SI) 
+
+# --- Classi --- #
+
+class Body:
+    """
+    Classe per rappresentare un corpo celeste.
+    
+    Attributi:
+        - nome: nome del corpo
+        - position: posizione (vettore)
+        - velocity: velocità (vettore)
+        - mass: massa del corpo
+        - radius: raggio del corpo
+        - gravitational_parameter: parametro gravitazionale (G*M)
+        - T_sidereal: periodo siderale del corpo        
+    """
+    def __init__(self, nome, position, velocity, mass, radius, gravitational_parameter, T_sidereal):
+        self.nome = nome                                        # Nome del corpo
+        self.position = position                                # Posizione (vettore 3D)
+        self.velocity = velocity                                # Velocità (vettore 3D)
+        self.mass = mass                                        # Massa del corpo
+        self.radius = radius                                    # Raggio del corpo
+        self.gravitational_parameter = gravitational_parameter  # Parametro gravitazionale  
+        self.T_sidereal = T_sidereal                            # tempo in secondi per compiere un giro di 360 gradi
+        self.angular_velocity = 2*np.pi/T_sidereal              # Velocità angolare (radianti al secondo) calcolata da T_sidereal
+
+# --- Incolla qui le tue funzioni --- #
 
 def car2kep(r, dotr, mu):
     """
@@ -596,7 +623,7 @@ def precompute_perturbed_orbit(elements, mu, J2, Re, num_orbits=50):
         
     return sol
 
-# --- FILE potenziali perturbati ---
+# --- FILE potenziali perturbati --- #
 
 def lpe_derivatives_j2(t, state, mu=398600.4418, J2=1.08263e-3, R_eq=6371.0):
     """
@@ -639,3 +666,8 @@ def lpe_derivatives_j2(t, state, mu=398600.4418, J2=1.08263e-3, R_eq=6371.0):
     dM_dt = n + J2 * mu * t4 * t8 * 1.0 / (-t9)**(3.0 / 2.0) * t13 * t14 * (-3.0 / 2.0)
 
     return [da_dt, de_dt, di_dt, dw_dt, dOmega_dt, dM_dt]
+
+# --- Corpi celesti --- #
+
+Terra = Body('Terra', np.array([0.0, 0.0, 0.0]), np.array([0.0, 0.0, 0.0]), 5.972e24, 6371.0, 398600.4418, 86164.1) 
+Moon = Body('Luna', np.array([0.0, 0.0, 0.0]), np.array([0.0, 0.0, 0.0]), 7.342e22, 1738.0, 4902.79996708864, 27.321661 * 86400)

@@ -4,7 +4,7 @@ import numpy as np
 import os
 from scipy.integrate import solve_ivp
 
-global gravitatioal_coefficient = 6.67430e-20  # Costante gravitazionale (in unità SI) 
+gravitatioal_coefficient = 6.67430e-20  # Costante gravitazionale (in unità SI) 
 
 # --- Classi --- #
 

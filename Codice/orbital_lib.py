@@ -459,6 +459,7 @@ def precompute_perturbed_orbit(elements, mu, J2, Re, num_orbits=50):
 
 # --- FILE potenziali perturbati --- #
 
+# Heart
 def lpe_derivatives_j2(t, state, mu=398600.4418, J2=1.08263e-3, R_eq=6371.0):
     """
     Calcola le derivate degli elementi orbitali (Equazioni Planetarie di Lagrange)
@@ -501,8 +502,7 @@ def lpe_derivatives_j2(t, state, mu=398600.4418, J2=1.08263e-3, R_eq=6371.0):
 
     return [da_dt, de_dt, di_dt, dw_dt, dOmega_dt, dM_dt]
 
-#L=10 Q=2
-
+# Moon - L=10 - Q=2
 def perturbed_moon(t, state, theta_GMST, mu=4902.8):
     """
     Derivate LPE per potenziale lunare generato con L_MAX=10, Q_MAX=2.

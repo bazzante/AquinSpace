@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import math
 import orbital_lib as ol
 import importlib
+import pandas as pd
 from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -39,7 +40,7 @@ def ensure_state():
         'running': False, 'position': [7000.0, 0.0, 0.0], 'velocity': [0.0, 7.5, 0.0],
         'trajectory': [], 'mean_anomaly': 0.0, 'sim_time': 0.0, 'mode': 'Anomalia',
         'elements': None, 'precomputed_sol': None, 'precomputed_idx': 0,
-        'earth_mesh': None
+        'earth_mesh': None, 'orbital_data_df': None
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -354,13 +355,31 @@ def main():
             stop_pressed = btn_col2.button('⏸️ STOP', type="primary", use_container_width=True)
             reset_trace_pressed = btn_col3.button('🔄 TRACCIA', type="primary", use_container_width=True)
 
+        with st.expander("4. Dati Orbitali", expanded=True):
+            st.markdown("Visualizza ed esporta i parametri orbitali propagati.")
+            if st.session_state.orbital_data_df is not None:
+                st.dataframe(st.session_state.orbital_data_df, height=200, use_container_width=True)
+                csv_data = st.session_state.orbital_data_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Scarica Dati Orbitali (CSV)",
+                    data=csv_data,
+                    file_name='dati_orbitali.csv',
+                    mime='text/csv',
+                    type='primary',
+                    use_container_width=True
+                )
+            else:
+                st.info("Premi START per calcolare l'orbita e visualizzare i dati.")
+
 # ================== PANNELLO DESTRO (Visualizzazione e Appendice) ==================
     with right_panel:
         if stop_pressed: 
             st.session_state.trajectory_data = None # Resetta i dati
+            st.session_state.orbital_data_df = None
             
         if reset_trace_pressed: 
             st.session_state.trajectory_data = None
+            st.session_state.orbital_data_df = None
         
         # Inizializziamo una variabile nel session state per tenere in memoria la traiettoria pre-calcolata
         if 'trajectory_data' not in st.session_state:
@@ -380,11 +399,31 @@ def main():
                         x_h, y_h, z_h, vx_h, vy_h, vz_h, t_sol, y_sol = ol.propagate_perturbed_orbit(
                             kepElements=kep_el, mu=MU_EARTH, num_steps=5000, num_orbits=100
                         )
+                        st.session_state.orbital_data_df = pd.DataFrame({
+                            'Tempo (s)': t_sol,
+                            'Semiasse a (km)': y_sol[0],
+                            'Eccentricità e': y_sol[1],
+                            'Inclinazione i (rad)': y_sol[2],
+                            'Arg. Pericentro w (rad)': y_sol[3],
+                            'RAAN Omega (rad)': y_sol[4],
+                            'Anomalia Media M (rad)': y_sol[5]
+                        })
                     else:
                         # Calcola 1 singola orbita osculatrice periodica
                         x_h, y_h, z_h, vx_h, vy_h, vz_h, orbEl_hist = ol.osculating_orbit(
                             kepElements=kep_el, mu=MU_EARTH
                         )
+                        T_periodo = 2 * math.pi / kep_el[6]
+                        t_sol = np.linspace(0, T_periodo, num=len(orbEl_hist))
+                        st.session_state.orbital_data_df = pd.DataFrame({
+                            'Tempo (s)': t_sol,
+                            'Semiasse a (km)': [el[0] for el in orbEl_hist],
+                            'Eccentricità e': [el[1] for el in orbEl_hist],
+                            'Inclinazione i (rad)': [el[2] for el in orbEl_hist],
+                            'Arg. Pericentro w (rad)': [el[3] for el in orbEl_hist],
+                            'RAAN Omega (rad)': [el[4] for el in orbEl_hist],
+                            'Anomalia Media M (rad)': [el[5] for el in orbEl_hist]
+                        })
                     
                     # Salviamo i risultati nel session state
                     st.session_state.trajectory_data = (x_h, y_h, z_h)

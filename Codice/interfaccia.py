@@ -296,6 +296,12 @@ def main():
         # Ho aggiunto un po' di margine superiore (margin-top: 40px) per centrare 
         # la scritta rispetto al logo diventato più alto
         st.markdown("<h1 style='font-size: 5rem; font-weight: 800; margin-top: 40px;'>AquinSpace</h1>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style='background-color: #1a1a1a; padding: 15px; border-radius: 10px; border-left: 5px solid #ff4b4b; margin-top: 10px;'>
+            <strong>Benvenuto In AquinSpace.</strong><br>
+            Questo strumento simula la dinamica dei satelliti attorno alla Terra. Tramite il pannello di controllo in "Stato Iniziale e Preset" puoi impostare le condizioni iniziali scegliendo tra 4 preset o sceglierne una di tuo interesse. Nella sezione "Parametri di Simulazione" puoi scegliere i parametri di avanzamento e la possibilità di osservare gli effetti delle perturbazioni gravitazionali (disponibile solo nella modalità "tempo") a lungo termine sulla traiettoria.
+        </div>
+        """, unsafe_allow_html=True)
 
     st.divider()
 

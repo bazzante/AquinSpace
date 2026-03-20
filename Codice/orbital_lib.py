@@ -2596,3 +2596,4 @@ def perturbed_moon(t, state, theta_GMST, mu=4902.8):
 
 Terra = Body('Terra', np.array([0.0, 0.0, 0.0]), np.array([0.0, 0.0, 0.0]), 5.972e24, 6371.0, 398600.4418, 86164.1) 
 Moon = Body('Luna', np.array([0.0, 0.0, 0.0]), np.array([0.0, 0.0, 0.0]), 7.342e22, 1738.0, 4902.79996708864, 27.321661 * 86400)
+    

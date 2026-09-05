@@ -341,6 +341,10 @@ def load_gravity_coefficients_grace(filepath, degree):
 
     Formato atteso (dopo l'intestazione, terminata dalla riga
     'end_of_head'): righe "gfc  l  m  C  S  sigma_C  sigma_S  ...".
+
+    I coefficienti in questi file sono ordinati per grado l crescente: non
+    appena si supera il grado richiesto la lettura si interrompe, invece di
+    scorrere l'intero file (utile perche' EGM2008.gfc arriva a l=2190).
     """
     filepath = Path(filepath)
     ls, ms, Cs, Ss = [], [], [], []
@@ -355,8 +359,11 @@ def load_gravity_coefficients_grace(filepath, degree):
             tokens = line.split()
             if len(tokens) < 5 or tokens[0] != 'gfc':
                 continue
-            l = int(float(tokens[1])); m = int(float(tokens[2]))
-            if l > degree or m > degree:
+            l = int(float(tokens[1]))
+            if l > degree:
+                break  # file ordinato per l crescente: nulla di utile oltre questo punto
+            m = int(float(tokens[2]))
+            if m > degree:
                 continue
             ls.append(l); ms.append(m)
             Cs.append(float(tokens[3])); Ss.append(float(tokens[4]))
@@ -376,13 +383,22 @@ def load_gravity_coefficients_grail(filepath, degree):
     Formato atteso: prima riga = intestazione (raggio di riferimento, GM,
     grado/ordine massimo, ...), righe successive = "l, m, C, S, sigma_C,
     sigma_S" separate da virgola.
+
+    I file GRAIL (es. GRGM900C) arrivano a grado 900 e possono superare i
+    150-200 MB: i dati sono ordinati per l crescente, quindi il file viene
+    letto a blocchi (chunk) e la lettura si interrompe non appena un intero
+    blocco supera il grado richiesto, invece di caricare tutto in memoria.
     """
     filepath = Path(filepath)
-    data = pd.read_csv(filepath, header=None, skiprows=1, usecols=[0, 1, 2, 3],
-                        names=['l', 'm', 'C', 'S'])
+    chunks = []
+    for chunk in pd.read_csv(filepath, header=None, skiprows=1, usecols=[0, 1, 2, 3],
+                              names=['l', 'm', 'C', 'S'], chunksize=200_000):
+        chunks.append(chunk[(chunk['l'] <= degree) & (chunk['m'] <= degree)])
+        if chunk['l'].min() > degree:
+            break
 
-    mask = (data['l'] <= degree) & (data['m'] <= degree)
-    data = data.loc[mask].sort_values(['l', 'm']).reset_index(drop=True)
+    data = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=['l', 'm', 'C', 'S'])
+    data = data.sort_values(['l', 'm']).reset_index(drop=True)
 
     C_unnorm, S_unnorm = _denormalize_coefficients(
         data['l'].to_numpy(), data['m'].to_numpy(), data['C'].to_numpy(), data['S'].to_numpy()
@@ -390,6 +406,33 @@ def load_gravity_coefficients_grail(filepath, degree):
 
     return pd.DataFrame({'l': data['l'].to_numpy(), 'm': data['m'].to_numpy(),
                           'C': C_unnorm, 'S': S_unnorm})
+
+
+def save_gravity_coefficients_csv(coeffs_table, filepath):
+    """
+    Salva una tabella di coefficienti (l, m, C, S) già denormalizzata in un
+    CSV compatto - pensato per essere generato UNA VOLTA sola in locale con
+    load_gravity_coefficients_grace/_grail troncando a un grado ragionevole
+    (es. 50-60), cosi' il sito web non deve portarsi dietro i file originali
+    EGM2008/GRAIL (rispettivamente qualche MB e centinaia di MB, il secondo
+    oltre il limite di 100MB per file di GitHub): con l<=60 il CSV pesa
+    poche decine di KB.
+    """
+    coeffs_table.to_csv(filepath, index=False)
+
+
+def load_gravity_coefficients_csv(filepath, degree=None):
+    """
+    Legge una tabella di coefficienti già denormalizzata e (tipicamente) già
+    troncata, salvata con save_gravity_coefficients_csv. Se degree è
+    specificato, applica comunque un ulteriore filtro l<=degree, m<=degree
+    (utile per usare un grado più basso di quello del file senza doverlo
+    rigenerare).
+    """
+    data = pd.read_csv(filepath)
+    if degree is not None:
+        data = data[(data['l'] <= degree) & (data['m'] <= degree)].reset_index(drop=True)
+    return data
 
 
 def build_coeffs_matrix(coeffs_table, degree):
@@ -612,3 +655,51 @@ def propagate_orbit_cowell_pines(kepElements, mu, R_ref, w_body, Cmat, Smat, deg
     return (x_hist.tolist(), y_hist.tolist(), z_hist.tolist(),
             vx_hist.tolist(), vy_hist.tolist(), vz_hist.tolist(),
             sol.t, elements_hist)
+
+
+def step_cowell_pines(state, t0, dt, Cmat, Smat, degree, mu, R_ref, w_body,
+                       n_substeps=5, rtol=1e-10, atol=1e-10, method='RK45'):
+    """
+    Integra le equazioni di Cowell (con perturbazione di Pines) su un
+    singolo intervallo [t0, t0+dt], campionando n_substeps punti intermedi.
+
+    Pensata per la propagazione "ad oltranza" (un intervallo per ogni
+    aggiornamento dell'interfaccia, finche' l'utente non preme STOP) invece
+    del precalcolo in blocco di propagate_orbit_cowell_pines: dato che il
+    propagatore di Cowell + Pines e' generico e non richiede di ripartire
+    dagli elementi kepleriani, riprende semplicemente dall'ultimo stato
+    integrato.
+
+    INPUT:
+        state       stato corrente [rx,ry,rz,vx,vy,vz]
+        t0          tempo corrente [s]
+        dt          durata dell'intervallo da integrare [s]
+        n_substeps  numero di punti intermedi campionati nell'intervallo
+
+    OUTPUT:
+        new_state   stato al tempo t0+dt
+        t_eval      array dei tempi campionati (t0 escluso, t0+dt incluso)
+        r_hist      array (n_substeps, 3) delle posizioni campionate
+        v_hist      array (n_substeps, 3) delle velocità campionate
+    """
+    state = np.asarray(state, dtype=float)
+    t_eval = np.linspace(t0, t0 + dt, n_substeps + 1)[1:]
+
+    sol = solve_ivp(
+        fun=eom_cowell_pines,
+        t_span=(t0, t0 + dt),
+        y0=state,
+        t_eval=t_eval,
+        args=(Cmat, Smat, degree, mu, R_ref, w_body),
+        method=method,
+        rtol=rtol, atol=atol
+    )
+
+    if not sol.success:
+        raise RuntimeError("Integrazione fallita: " + sol.message)
+
+    new_state = sol.y[:, -1]
+    r_hist = sol.y[0:3, :].T
+    v_hist = sol.y[3:6, :].T
+
+    return new_state, sol.t, r_hist, v_hist

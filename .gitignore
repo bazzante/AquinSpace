@@ -1,2 +1,9 @@
 generatore equazioni potenziale gravitazionale/
 Trash0_2_1.py
+.DS_Store
+**/.DS_Store
+__pycache__/
+**/__pycache__/
+*.pyc
+Codice/data/*.gfc
+Codice/data/*.tab.txt
